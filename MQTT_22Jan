@@ -1,0 +1,167 @@
+/*
+  WiFi TMP to MQTT
+ Circuit:
+ * LED attached to pin 9
+ * TMP36 attached to pin A0
+ created Feb 2023
+ by Duncan Wilson
+ */
+#include <SPI.h>
+#include <WiFi101.h>
+#include <ArduinoMqttClient.h>
+
+// Wifi and MQTT
+#include "arduino_secrets.h" 
+/*
+**** please enter your sensitive data in the Secret tab/arduino_secrets.h
+**** using format below
+#define SECRET_SSID "ssid name"
+#define SECRET_PASS "ssid password"
+#define SECRET_MQTTUSER "user name - eg student"
+#define SECRET_MQTTPASS "password";
+ */
+
+const char* ssid     = SECRET_SSID;
+const char* pass     = SECRET_PASS;
+const char* mqttuser = SECRET_MQTTUSER;
+const char* mqttpass = SECRET_MQTTPASS;
+
+WiFiClient wifiClient;
+MqttClient mqttClient(wifiClient);
+
+const char* broker = "mqtt.cetools.org";
+int        port     = 1884;
+const char topicTMP36[]  = "student/BIOS0031/ucbtyssBIOS/temperature";
+
+int status = WL_IDLE_STATUS;
+WiFiServer server(80);
+
+//set interval for sending messages (milliseconds)
+const long interval = 8000;
+unsigned long previousMillis = 0;
+
+#define debugSerial Serial
+//TMP36 Pin Variables
+int sensorPin = A0; //the analog pin the TMP36's Vout (sense)
+float temperatureC = 0;
+
+void setup() {
+  debugSerial.begin(9600);      // initialize serial communication
+  // Wait a maximum of 10s for Serial Monitor
+  while (!debugSerial && millis() < 10000)
+    ;
+  pinMode(9, OUTPUT);      // set the LED pin mode
+  
+  setupWiFi();
+  setupMQTT();
+
+}
+
+void loop() {
+  // call poll() regularly to allow the library to send MQTT keep alives which
+  // avoids being disconnected by the broker
+  mqttClient.poll();
+
+  if (!mqttClient.connected()) {
+    setupMQTT();
+  }
+
+  unsigned long currentMillis = millis();
+	
+  if (currentMillis - previousMillis >= interval) {
+    // save the last time a message was sent
+    previousMillis = currentMillis;
+
+    getTempC();
+    debugSerial.print(temperatureC); debugSerial.println(" degrees C");
+
+    // send message, the Print interface can be used to set the message contents
+    mqttClient.beginMessage(topicTMP36);
+    mqttClient.print(temperatureC);
+    mqttClient.endMessage();
+
+  }
+
+}
+
+void getTempC(){
+  //getting the voltage reading from the temperature sensor
+  int reading = analogRead(sensorPin);  
+
+  // converting that reading to voltage, for 3.3v arduino use 3.3
+  float voltage = reading * 3.3;
+  voltage /= 1024.0; 
+
+  // now print out the temperature
+  temperatureC = (voltage - 0.5) * 100 ;  //converting from 10 mv per degree wit 500 mV offset
+                                                //to degrees ((voltage - 500mV) times 100)
+
+}
+
+void setupWiFi() {
+  // check for the presence of the shield:
+  if (WiFi.status() == WL_NO_SHIELD) {
+    Serial.println("WiFi shield not present");
+    while (true);       // don't continue
+  }
+
+  // attempt to connect to WiFi network:
+  while ( status != WL_CONNECTED) {
+    Serial.print("Attempting to connect to Network named: ");
+    Serial.println(ssid);                   // print the network name (SSID);
+
+    // Connect to WPA/WPA2 network. Change this line if using open or WEP network:
+    status = WiFi.begin(ssid, pass);
+    // wait 10 seconds for connection:
+    delay(10000);
+  }
+  server.begin();                           // start the web server on port 80
+  printWiFiStatus();                        // you're connected now, so print out the status
+
+}
+
+void setupMQTT() {
+
+  // You can provide a unique client ID, if not set the library uses Arduino-millis()
+  // Each client must have a unique client ID
+  mqttClient.setId("ucbtyssBIOS");
+
+  // You can provide a username and password for authentication
+  mqttClient.setUsernamePassword(mqttuser, mqttpass);
+  
+  // Loop until we're reconnected
+  while (!mqttClient.connected()) {    // while not (!) connected....
+    Serial.print("Attempting to connect to the MQTT broker: ");
+    Serial.println(broker);
+    
+    // Attempt to connect
+    if (mqttClient.connect(broker, port)) {
+      Serial.println("You're connected to the MQTT broker!");
+    } else {
+      Serial.print("MQTT connection failed! Error code = ");
+      Serial.println(mqttClient.connectError());
+      Serial.println(" try again in 5 seconds");
+      // Wait 5 seconds before retrying
+      delay(5000);
+    }
+  }
+
+}
+
+void printWiFiStatus() {
+  // print the SSID of the network you're attached to:
+  Serial.print("SSID: ");
+  Serial.println(WiFi.SSID());
+
+  // print your WiFi shield's IP address:
+  IPAddress ip = WiFi.localIP();
+  Serial.print("IP Address: ");
+  Serial.println(ip);
+
+  // print the received signal strength:
+  long rssi = WiFi.RSSI();
+  Serial.print("signal strength (RSSI):");
+  Serial.print(rssi);
+  Serial.println(" dBm");
+
+}
